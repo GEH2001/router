@@ -39,6 +39,35 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
 
   // FILL THIS IN
 
+  print_hdrs(packet);
+
+  // Parse ethernet header
+  ethernet_hdr *eth_hdr = (ethernet_hdr *)packet.data();
+  
+  /**
+   * Ethernet frames not destined to the router, i.e.,
+   * (a) neither the corresponding MAC address of the interface
+   * (b) nor broadcast MAC address (ff:ff:ff:ff:ff:ff)
+   */
+  Buffer eth_dhost = Buffer(eth_hdr->ether_dhost, eth_hdr->ether_dhost + ETHER_ADDR_LEN);
+  auto dst_iface = findIfaceByMac(eth_dhost);
+  if (dst_iface == nullptr && eth_dhost != ETHER_ADDR_BROADCAST) {
+    std::cerr << "Received packet, not destined to the router, ignoring" << std::endl;
+    return;
+  }
+  /**
+   * ignore Ethernet frames other than ARP and IPv4
+   */
+  auto eth_type = eth_hdr->ether_type;
+  if(eth_type == ethertype_arp) {
+    handleArpPacket(packet, inIface);
+  } else if (eth_type == ethertype_ip) {
+    handleIPPacket(packet, inIface);
+  } else {
+    std::cerr << "Received packet, not ARP or IP, ignoring" << std::endl;
+    return;
+  }
+
 }
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////

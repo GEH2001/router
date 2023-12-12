@@ -55,6 +55,8 @@ namespace simple_router {
 
 using Buffer = std::vector<unsigned char>;
 
+const Buffer ETHER_ADDR_BROADCAST = Buffer({0xff, 0xff, 0xff, 0xff, 0xff, 0xff});
+
 /* Structure of a ICMP header
  */
 struct icmp_hdr {
