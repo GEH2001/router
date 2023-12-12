@@ -1,0 +1,4 @@
+*.o
+router
+build/*
+.vagrant
