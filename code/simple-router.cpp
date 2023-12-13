@@ -60,7 +60,7 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
    */
   auto eth_type = eth_hdr->ether_type;
   if(eth_type == ethertype_arp) {
-    handleArpPacket(packet, inIface);
+    handleArp((arp_hdr *)(packet.data() + sizeof(ethernet_hdr)));
   } else if (eth_type == ethertype_ip) {
     handleIPPacket(packet, inIface);
   } else {
@@ -68,6 +68,71 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
     return;
   }
 
+}
+
+void SimpleRouter::handleArp(const arp_hdr* arp_h) {
+  /**
+   * ARP request
+   * 1. check if the destination IP address is in the router
+   * 2. if yes, send ARP reply with the MAC address of the interface
+   * 3. if no, ignore
+   */
+  if(ntohs(arp_h->arp_op) == arp_op_request) {
+    auto dst_iface = findIfaceByIp(arp_h->arp_tip);
+    if(dst_iface == nullptr) {
+      std::cerr << "(Invalid) Received ARP request for " << ipToString(arp_h->arp_tip) << ", not in the router, ignoring" << std::endl;
+      return;
+    }
+    fprintf(stderr, "(Valid) Received ARP request, destination interface: %s\n %s\n %s\n", dst_iface->name.c_str(), ipToString(dst_iface->ip).c_str(), macToString(dst_iface->addr).c_str());
+
+    // Respond to ARP request
+    Buffer response = Buffer(sizeof(ethernet_hdr) + sizeof(arp_hdr));
+    // Ethernet header
+    ethernet_hdr *eth_hdr_res = (ethernet_hdr *)response.data();
+    eth_hdr_res->ether_type = htons(ethertype_arp);
+    memcpy(eth_hdr_res->ether_dhost, arp_h->arp_sha, ETHER_ADDR_LEN);
+    memcpy(eth_hdr_res->ether_shost, dst_iface->addr.data(), ETHER_ADDR_LEN);
+    // ARP header
+    arp_hdr *arp_hdr_res = (arp_hdr *)(response.data() + sizeof(ethernet_hdr));
+    arp_hdr_res->arp_hrd = htons(arp_hrd_ethernet);
+    arp_hdr_res->arp_pro = htons(ethertype_ip);
+    arp_hdr_res->arp_hln = ETHER_ADDR_LEN;
+    arp_hdr_res->arp_pln = sizeof(uint32_t);
+    arp_hdr_res->arp_op = htons(arp_op_reply);
+    memcpy(arp_hdr_res->arp_sha, dst_iface->addr.data(), ETHER_ADDR_LEN);
+    arp_hdr_res->arp_sip = dst_iface->ip;
+    memcpy(arp_hdr_res->arp_tha, arp_h->arp_sha, ETHER_ADDR_LEN);
+    arp_hdr_res->arp_tip = arp_h->arp_sip;
+    
+    // 查询路由表，决定从哪个接口发出去
+    auto outIface = getRoutingTable().lookup(arp_hdr_res->arp_tip).ifName;
+    fprintf(stderr, "Send ARP reply to %s\n", outIface.c_str());
+    sendPacket(response, outIface);
+    return;
+  }
+  /**
+   * ARP reply
+   * 1. record IP-MAC mapping in ARP cache
+   * 2. send out all corresponding enqueued packets
+   */
+  else if(ntohs(arp_h->arp_op) == arp_op_reply) {
+    Buffer s_mac(arp_h->arp_sha, arp_h->arp_sha + ETHER_ADDR_LEN);
+    // insertArpEntry返回与该IP对应的请求队列，且将该IP-MAC映射插入ARP缓存
+    auto arp_request = m_arp.insertArpEntry(s_mac, arp_h->arp_sip);
+    if(arp_request != nullptr) {
+      // 发送所有等待该IP-MAC映射的数据包
+      for(auto p : arp_request->packets) {
+        sendPacket(p.packet, p.iface);
+      }
+      // 删除该IP对应的请求队列
+      m_arp.removeRequest(arp_request);
+    }
+    return;
+  }
+  else {
+    std::cerr << "Received ARP packet, not request or reply, ignoring" << std::endl;
+    return;
+  }
 }
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////

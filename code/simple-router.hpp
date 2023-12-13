@@ -50,7 +50,10 @@ public:
    */
   void
   sendPacket(const Buffer& packet, const std::string& outIface);
-
+  /**
+   * Handle ARP packets, used in `handlePacket` 
+   */
+  void handleArp(const arp_hdr* arp_h);
   /**
    * Load routing table information from \p rtConfig file
    */

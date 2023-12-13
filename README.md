@@ -25,5 +25,6 @@ $ sudo ./autograde.py
 ```
 
 ## TODO
-- [ ] handleArp
+- [x] handleArp
 - [ ] handleIp
+- [ ] lookup
