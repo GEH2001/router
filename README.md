@@ -28,3 +28,5 @@ $ sudo ./autograde.py
 - [x] handleArp
 - [ ] handleIp
 - [ ] lookup
+- [ ] sendIcmpType3
+- [ ] sendIcmpEchoReply

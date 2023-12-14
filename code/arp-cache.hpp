@@ -158,6 +158,10 @@ public:
    *
    * A pointer to the ARP request is returned; it should not be freed. The caller
    * can remove the ARP request from the queue by calling sr_arpreq_destroy.
+   * @param ip 目的IP地址，用于构建ARP请求包
+   * @param packet 要发送的数据包
+   * @param iface 出接口
+   * @note 当ARP响应到达时，会将其关联的`packet`通过`iface`发送出去
    */
   std::shared_ptr<ArpRequest>
   queueRequest(uint32_t ip, const Buffer& packet, const std::string& iface);

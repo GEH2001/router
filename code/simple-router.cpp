@@ -105,7 +105,14 @@ void SimpleRouter::handleArp(const arp_hdr* arp_h) {
     arp_hdr_res->arp_tip = arp_h->arp_sip;
     
     // 查询路由表，决定从哪个接口发出去
-    auto outIface = getRoutingTable().lookup(arp_hdr_res->arp_tip).ifName;
+    RoutingTableEntry routing_entry;
+    try {
+      routing_entry = getRoutingTable().lookup(arp_hdr_res->arp_tip);
+    } catch(...) {
+      std::cerr << "Received ARP request, routing entry not found, ignoring" << std::endl;
+      return;
+    }
+    auto outIface = routing_entry.ifName;
     fprintf(stderr, "Send ARP reply to %s\n", outIface.c_str());
     sendPacket(response, outIface);
     return;
@@ -122,6 +129,10 @@ void SimpleRouter::handleArp(const arp_hdr* arp_h) {
     if(arp_request != nullptr) {
       // 发送所有等待该IP-MAC映射的数据包
       for(auto p : arp_request->packets) {
+        // 更新以太网帧头
+        ethernet_hdr *eth_h = (ethernet_hdr *)p.packet.data();
+        memcpy(eth_h->ether_dhost, s_mac.data(), ETHER_ADDR_LEN);
+
         sendPacket(p.packet, p.iface);
       }
       // 删除该IP对应的请求队列
@@ -134,6 +145,121 @@ void SimpleRouter::handleArp(const arp_hdr* arp_h) {
     return;
   }
 }
+/**
+ * Handle IP packets, used in `handlePacket`
+ * @param packet 以太网帧
+ * @param inIface 入接口
+*/
+void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
+  ethernet_hdr *eth_h = (ethernet_hdr *)packet.data();
+  ip_hdr *ip_h = (ip_hdr *)(packet.data() + sizeof(ethernet_hdr));
+  icmp_hdr *icmp_h = (icmp_hdr *)(packet.data() + sizeof(ethernet_hdr) + sizeof(ip_hdr));
+  // 检查IP包的最小长度
+  if(packet.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr)) {
+    std::cerr << "Received IP packet, but header is incomplete, ignoring" << std::endl;
+    return;
+  }
+  // 检查IP包的校验和
+  if(ip_h->ip_sum != cksum(ip_h, sizeof(ip_hdr))) {
+    std::cerr << "Received IP packet, but checksum is incorrect, ignoring" << std::endl;
+    return;
+  }
+
+  
+  // 路由器直接丢弃TTL为0或1的IP数据报，发送ICMP超时差错报文
+  // 参考https://blog.csdn.net/weixin_33881753/article/details/92789295
+  if(ip_h->ip_ttl <= 1) {
+    // TODO: 发送ICMP超时差错报文
+    std::cerr << "Received IP packet, TTL is 0 or 1, respond ICMP(11,0)" << std::endl;
+    sendIcmpType3(packet, inIface, 11, 0); // Time Exceeded
+    return;
+  }
+
+  // 检查IP包的目的IP地址是否为路由器的IP地址
+  auto dst_iface = findIfaceByIp(ip_h->ip_dst);
+  
+  /**
+   * ---------------------------------------------
+   * (1) destined to the router
+   *   (a) ICMP echo request & checksum valid -> respond ICMP echo reply
+   *   (b) TCP/UDP -> respond ICMP port unreachable 
+   * ---------------------------------------------
+  */
+  if(dst_iface != nullptr) {
+    // (a) IP Protocol不是ICMP, 返回端口不可达ICMP报文
+    if(ip_h->ip_p != ip_protocol_icmp) { 
+      // `Port unreachable` ICMP message (UDP or TCP)
+      if(ip_h->ip_p == ip_protocol_tcp || ip_h->ip_p == ip_protocol_udp) {
+        std::cerr << "Received IP packet, with TCP/UDP payload, respond ICMP(3,3)" << std::endl;
+        sendIcmpType3(packet, inIface, 3, 3); // Port Unreachable
+      } else {
+        std::cerr << "Received IP packet, not ICMP, TCP or UDP, ignoring" << std::endl;
+      }
+      return;
+    }
+    // (b) 收到Echo请求，返回Echo应答
+    if(icmp_h->icmp_code == 8 && icmp_h->icmp_type == 0) {
+      std::cerr << "Received IP packet, ICMP Echo request, respond ICMP(0,0)" << std::endl;
+      sendIcmpEchoReply(packet, inIface); // Echo Reply
+    } else {
+      std::cerr << "Received IP packet, not ICMP Echo request, ignoring" << std::endl;
+    }
+    return;
+  }
+  
+  /**
+   * -----------------------------------------
+   * (2) datagrams to be forwarded
+   * Find next-hop IP address and forward the packet
+   * Decrement TTL and recompute the checksum
+   * ----------------------------------------- 
+  */
+  
+  // 查找路由表: 下一跳从哪个接口发出
+  RoutingTableEntry routing_entry;
+  try {
+    routing_entry = getRoutingTable().lookup(ip_h->ip_dst);
+  } catch(...) {
+    std::cerr << "Received IP packet, routing , ignoring" << std::endl;
+    return;
+  }
+  auto outIface = findIfaceByName(routing_entry.ifName);
+  if(outIface == nullptr) {
+    std::cerr << "Received IP packet, failed to find iface by name, ignoring" << std::endl;
+    return;
+  }
+
+  // 构建 待转发 的以太网帧
+  Buffer out_packet = packet;
+  // 更新以太网帧头
+  ethernet_hdr *out_eth_h = (ethernet_hdr *)out_packet.data();
+  // memcpy(out_eth_h->ether_dhost, ETHER_ADDR_BROADCAST.data(), ETHER_ADDR_LEN);
+  memcpy(out_eth_h->ether_shost, outIface->addr.data(), ETHER_ADDR_LEN);
+  // 更新IP数据报头
+  ip_hdr *out_ip_h = (ip_hdr *)(out_packet.data() + sizeof(ethernet_hdr));
+  // ttl减1
+  out_ip_h->ip_ttl -= 1;
+  // 更新校验和
+  out_ip_h->ip_sum = 0;
+  out_ip_h->ip_sum = cksum(out_ip_h, sizeof(ip_hdr));
+
+
+  // 查找ARP缓存: 下一跳的MAC地址
+  auto arp_entry = m_arp.lookup(ip_h->ip_dst);
+  if(arp_entry == nullptr) {
+    // 添加到ARP请求队列
+    m_arp.queueRequest(ip_h->ip_dst, out_packet, outIface->name);
+    return;
+  }
+
+  // 添加目的MAC地址
+  memcpy(out_eth_h->ether_dhost, arp_entry->mac.data(), ETHER_ADDR_LEN);
+  sendPacket(out_packet, outIface->name);
+  
+  return;
+}
+
+
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 

@@ -50,10 +50,23 @@ public:
    */
   void
   sendPacket(const Buffer& packet, const std::string& outIface);
+  
   /**
    * Handle ARP packets, used in `handlePacket` 
    */
   void handleArp(const arp_hdr* arp_h);
+
+  void handleIp(const Buffer& packet, const std::string& inIface);
+
+  /**
+   * 创建一个ARP请求包，用于查询目标IP的MAC地址
+   * @param src_mac 源MAC地址
+   * @param src_ip 源IP地址
+   * @param dst_ip 目标IP地址
+   * @return ARP请求包, 以太网帧头 + ARP帧头 + ARP帧数据
+   */
+  Buffer createArpReqPkt(const Buffer& src_mac, uint32_t src_ip, uint32_t dst_ip);
+
   /**
    * Load routing table information from \p rtConfig file
    */
