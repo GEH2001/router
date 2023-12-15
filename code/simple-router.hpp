@@ -58,15 +58,23 @@ public:
 
   void handleIp(const Buffer& packet, const std::string& inIface);
 
-  /**
-   * 创建一个ARP请求包，用于查询目标IP的MAC地址
-   * @param src_mac 源MAC地址
-   * @param src_ip 源IP地址
-   * @param dst_ip 目标IP地址
-   * @return ARP请求包, 以太网帧头 + ARP帧头 + ARP帧数据
-   */
-  Buffer createArpReqPkt(const Buffer& src_mac, uint32_t src_ip, uint32_t dst_ip);
+  Buffer framing();
 
+  /**
+   * 将IP数据报封装为以太网帧, 调用sendPacket方法发送
+   * @param datagram IP数据报
+   */
+  void sendIpDatagram(const Buffer& datagram);
+
+  /**
+   * 发送 Time Exceeded(11,0) 和 Port Unreachable(3,3) 的ICMP报文
+   * @param packet 以太网帧
+   * @param inIface 接收到该帧的接口
+   * @param type ICMP类型
+   * @param code ICMP代码
+   */
+  void sendIcmpType3(const Buffer& packet, const std::string& inIface, uint8_t type, uint8_t code);
+  
   /**
    * Load routing table information from \p rtConfig file
    */

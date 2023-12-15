@@ -2,3 +2,4 @@
 router
 build/*
 .vagrant
+.vscode/*

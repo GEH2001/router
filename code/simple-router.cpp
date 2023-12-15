@@ -259,6 +259,66 @@ void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
   return;
 }
 
+void SimpleRouter::sendIpDatagram(const Buffer& datagram) {
+  
+}
+
+/**
+ * @todo packet -> datagram, use `sendIpDatagram`
+ */
+void SimpleRouter::sendIcmpType3(const Buffer& packet, const std::string& inIface, uint8_t type, uint8_t code) {
+  Buffer frame = Buffer(sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
+  ethernet_hdr *eth_h = (ethernet_hdr *)frame.data();
+  ip_hdr *ip_h = (ip_hdr *)(frame.data() + sizeof(ethernet_hdr));
+  icmp_t3_hdr *icmp_h = (icmp_t3_hdr *)(frame.data() + sizeof(ethernet_hdr) + sizeof(ip_hdr));
+  
+  // ICMP header
+  icmp_h->icmp_type = type;
+  icmp_h->icmp_code = code;
+  memcpy(icmp_h->data, packet.data() + sizeof(ethernet_hdr), ICMP_DATA_SIZE);
+  
+  // IP header
+  ip_h->ip_tos = 0;
+  ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
+  ip_h->ip_id = htons((uint16_t)rand());
+  ip_h->ip_off = htons(IP_DF);
+  ip_h->ip_ttl = 64;
+  ip_h->ip_p = ip_protocol_icmp;
+  ip_h->ip_src = findIfaceByName(inIface)->ip;
+  ip_h->ip_dst = ((ip_hdr *)(packet.data() + sizeof(ethernet_hdr)))->ip_src;
+  ip_h->ip_sum = 0;
+  ip_h->ip_sum = cksum(ip_h, sizeof(ip_hdr));
+  
+  // TODO: 以下代码封装为sendIpDatagram
+  // Ethernet header
+  eth_h->ether_type = htons(ethertype_ip);
+  // 查询路由表，找到出接口
+  RoutingTableEntry routing_entry;
+  try {
+    routing_entry = getRoutingTable().lookup(ip_h->ip_dst);
+  } catch(...) {
+    fprintf(stderr, "sendIcmpType3: routing entry not found\n");
+    return;
+  }
+  auto outIface = findIfaceByName(routing_entry.ifName);
+  if(outIface == nullptr) {
+    fprintf(stderr, "sendIcmpType3: failed to find iface by name\n");
+    return;
+  }
+  
+  memcpy(eth_h->ether_shost, outIface->addr.data(), ETHER_ADDR_LEN);
+
+  // 查询ARP缓存，找到下一跳的MAC地址
+  auto arp_entry = m_arp.lookup(ip_h->ip_dst);
+  if(arp_entry == nullptr) {
+    // 添加到ARP请求队列
+    m_arp.queueRequest(ip_h->ip_dst, frame, outIface->name);
+    return;
+  }
+
+  memcpy(eth_h->ether_dhost, arp_entry->mac.data(), ETHER_ADDR_LEN);
+  sendPacket(frame, outIface->name);
+}
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
