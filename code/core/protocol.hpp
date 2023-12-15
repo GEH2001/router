@@ -65,6 +65,15 @@ struct icmp_hdr {
   uint16_t icmp_sum;
 } __attribute__ ((packed)) ;
 
+/* Structure of a echo/echo-reply header
+ */
+struct icmp_echo_hdr {
+  uint8_t icmp_type;
+  uint8_t icmp_code;
+  uint16_t icmp_sum;
+  uint16_t icmp_id;
+  uint16_t icmp_seq;
+} __attribute__ ((packed)) ;
 
 /* Structure of a type3 ICMP header
  */

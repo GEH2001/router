@@ -39,6 +39,8 @@ public:
    * the interface.  The packet buffer \p packet and the receiving
    * interface \p inIface are passed in as parameters. The packet is
    * complete with ethernet headers.
+   * @param packet 以太网帧
+   * @param inIface 帧的入接口
    */
   void
   handlePacket(const Buffer& packet, const std::string& inIface);
@@ -56,24 +58,36 @@ public:
    */
   void handleArp(const arp_hdr* arp_h);
 
-  void handleIp(const Buffer& packet, const std::string& inIface);
-
-  Buffer framing();
+  /**
+   * Handle IP packets, used in `handlePacket`
+   * @param datagram IP数据报(ether payload)
+   * @param inIface 帧的入接口
+   */
+  void handleIp(const Buffer& datagram, const std::string& inIface);
 
   /**
    * 将IP数据报封装为以太网帧, 调用sendPacket方法发送
-   * @param datagram IP数据报
+   * @param datagram 要发送的IP数据报
    */
   void sendIpDatagram(const Buffer& datagram);
 
   /**
    * 发送 Time Exceeded(11,0) 和 Port Unreachable(3,3) 的ICMP报文
-   * @param packet 以太网帧
-   * @param inIface 接收到该帧的接口
+   * 构建ICMP报文, 调用sendIpDatagram方法发送
+   * @param inDatagram 帧携带的IP数据报
+   * @param inIface 帧的入接口
    * @param type ICMP类型
    * @param code ICMP代码
    */
-  void sendIcmpType3(const Buffer& packet, const std::string& inIface, uint8_t type, uint8_t code);
+  void sendIcmpType3(const Buffer& inDatagram, const std::string& inIface, uint8_t type, uint8_t code);
+
+  /**
+   * 发送 Echo Reply(0,0) 的ICMP报文
+   * 构建ICMP报文, 调用sendIpDatagram方法发送
+   * @param inDatagram 帧携带的IP数据报
+   * @param inIface 帧的入接口
+   */
+  void sendIcmpEchoReply(const Buffer& inDatagram, const std::string& inIface);
   
   /**
    * Load routing table information from \p rtConfig file

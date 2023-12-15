@@ -26,11 +26,12 @@ $ sudo ./autograde.py
 
 ## TODO
 - [x] handleArp
-- [ ] handleIp
+- [x] handleIp
+- [x] sendIpDatagram
+- [x] sendIcmpType3
+- [x] sendIcmpEchoReply
 - [ ] lookup
-- [ ] sendIcmpType3
-- [ ] sendIcmpEchoReply
-- [ ] sendIpDatagram
+
 
 ## Problems
 1. ICMP消息从哪个接口发出？假如以太网帧F1到达路由器接口A，解封装得

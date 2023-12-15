@@ -62,7 +62,8 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
   if(eth_type == ethertype_arp) {
     handleArp((arp_hdr *)(packet.data() + sizeof(ethernet_hdr)));
   } else if (eth_type == ethertype_ip) {
-    handleIPPacket(packet, inIface);
+    Buffer ip_datagram = Buffer(packet.begin() + sizeof(ethernet_hdr), packet.end());
+    handleIp(ip_datagram, inIface);
   } else {
     std::cerr << "Received packet, not ARP or IP, ignoring" << std::endl;
     return;
@@ -145,17 +146,13 @@ void SimpleRouter::handleArp(const arp_hdr* arp_h) {
     return;
   }
 }
-/**
- * Handle IP packets, used in `handlePacket`
- * @param packet 以太网帧
- * @param inIface 入接口
-*/
-void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
-  ethernet_hdr *eth_h = (ethernet_hdr *)packet.data();
-  ip_hdr *ip_h = (ip_hdr *)(packet.data() + sizeof(ethernet_hdr));
-  icmp_hdr *icmp_h = (icmp_hdr *)(packet.data() + sizeof(ethernet_hdr) + sizeof(ip_hdr));
+
+void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) {
+  ip_hdr *ip_h = (ip_hdr *)(datagram.data());
+  icmp_hdr *icmp_h = (icmp_hdr *)(datagram.data() + sizeof(ip_hdr));
+  
   // 检查IP包的最小长度
-  if(packet.size() < sizeof(ethernet_hdr) + sizeof(ip_hdr)) {
+  if(datagram.size() < sizeof(ip_hdr)) {
     std::cerr << "Received IP packet, but header is incomplete, ignoring" << std::endl;
     return;
   }
@@ -171,7 +168,8 @@ void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
   if(ip_h->ip_ttl <= 1) {
     // TODO: 发送ICMP超时差错报文
     std::cerr << "Received IP packet, TTL is 0 or 1, respond ICMP(11,0)" << std::endl;
-    sendIcmpType3(packet, inIface, 11, 0); // Time Exceeded
+    // 去除以太网帧头
+    sendIcmpType3(datagram, inIface, 11, 0); // Time Exceeded
     return;
   }
 
@@ -188,10 +186,9 @@ void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
   if(dst_iface != nullptr) {
     // (a) IP Protocol不是ICMP, 返回端口不可达ICMP报文
     if(ip_h->ip_p != ip_protocol_icmp) { 
-      // `Port unreachable` ICMP message (UDP or TCP)
       if(ip_h->ip_p == ip_protocol_tcp || ip_h->ip_p == ip_protocol_udp) {
         std::cerr << "Received IP packet, with TCP/UDP payload, respond ICMP(3,3)" << std::endl;
-        sendIcmpType3(packet, inIface, 3, 3); // Port Unreachable
+        sendIcmpType3(datagram, inIface, 3, 3); // Port Unreachable
       } else {
         std::cerr << "Received IP packet, not ICMP, TCP or UDP, ignoring" << std::endl;
       }
@@ -200,7 +197,7 @@ void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
     // (b) 收到Echo请求，返回Echo应答
     if(icmp_h->icmp_code == 8 && icmp_h->icmp_type == 0) {
       std::cerr << "Received IP packet, ICMP Echo request, respond ICMP(0,0)" << std::endl;
-      sendIcmpEchoReply(packet, inIface); // Echo Reply
+      sendIcmpEchoReply(datagram, inIface); // Echo Reply
     } else {
       std::cerr << "Received IP packet, not ICMP Echo request, ignoring" << std::endl;
     }
@@ -215,97 +212,38 @@ void SimpleRouter::handleIp(const Buffer& packet, const std::string& inIface) {
    * ----------------------------------------- 
   */
   
-  // 查找路由表: 下一跳从哪个接口发出
-  RoutingTableEntry routing_entry;
-  try {
-    routing_entry = getRoutingTable().lookup(ip_h->ip_dst);
-  } catch(...) {
-    std::cerr << "Received IP packet, routing , ignoring" << std::endl;
-    return;
-  }
-  auto outIface = findIfaceByName(routing_entry.ifName);
-  if(outIface == nullptr) {
-    std::cerr << "Received IP packet, failed to find iface by name, ignoring" << std::endl;
-    return;
-  }
-
-  // 构建 待转发 的以太网帧
-  Buffer out_packet = packet;
-  // 更新以太网帧头
-  ethernet_hdr *out_eth_h = (ethernet_hdr *)out_packet.data();
-  // memcpy(out_eth_h->ether_dhost, ETHER_ADDR_BROADCAST.data(), ETHER_ADDR_LEN);
-  memcpy(out_eth_h->ether_shost, outIface->addr.data(), ETHER_ADDR_LEN);
-  // 更新IP数据报头
-  ip_hdr *out_ip_h = (ip_hdr *)(out_packet.data() + sizeof(ethernet_hdr));
-  // ttl减1
-  out_ip_h->ip_ttl -= 1;
-  // 更新校验和
+  Buffer out_datagram = Buffer(datagram);
+  // IP header
+  ip_hdr *out_ip_h = (ip_hdr *)(out_datagram.data());
+  out_ip_h->ip_ttl -= 1; // TTL减1
   out_ip_h->ip_sum = 0;
-  out_ip_h->ip_sum = cksum(out_ip_h, sizeof(ip_hdr));
+  out_ip_h->ip_sum = cksum(out_ip_h, sizeof(ip_hdr)); // 重新计算校验和
 
-
-  // 查找ARP缓存: 下一跳的MAC地址
-  auto arp_entry = m_arp.lookup(ip_h->ip_dst);
-  if(arp_entry == nullptr) {
-    // 添加到ARP请求队列
-    m_arp.queueRequest(ip_h->ip_dst, out_packet, outIface->name);
-    return;
-  }
-
-  // 添加目的MAC地址
-  memcpy(out_eth_h->ether_dhost, arp_entry->mac.data(), ETHER_ADDR_LEN);
-  sendPacket(out_packet, outIface->name);
+  sendIpDatagram(out_datagram);
   
   return;
 }
 
 void SimpleRouter::sendIpDatagram(const Buffer& datagram) {
-  
-}
-
-/**
- * @todo packet -> datagram, use `sendIpDatagram`
- */
-void SimpleRouter::sendIcmpType3(const Buffer& packet, const std::string& inIface, uint8_t type, uint8_t code) {
-  Buffer frame = Buffer(sizeof(ethernet_hdr) + sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
+  Buffer frame = Buffer(datagram);
+  frame.insert(frame.begin(), sizeof(ethernet_hdr), 0);
   ethernet_hdr *eth_h = (ethernet_hdr *)frame.data();
   ip_hdr *ip_h = (ip_hdr *)(frame.data() + sizeof(ethernet_hdr));
-  icmp_t3_hdr *icmp_h = (icmp_t3_hdr *)(frame.data() + sizeof(ethernet_hdr) + sizeof(ip_hdr));
-  
-  // ICMP header
-  icmp_h->icmp_type = type;
-  icmp_h->icmp_code = code;
-  memcpy(icmp_h->data, packet.data() + sizeof(ethernet_hdr), ICMP_DATA_SIZE);
-  
-  // IP header
-  ip_h->ip_tos = 0;
-  ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
-  ip_h->ip_id = htons((uint16_t)rand());
-  ip_h->ip_off = htons(IP_DF);
-  ip_h->ip_ttl = 64;
-  ip_h->ip_p = ip_protocol_icmp;
-  ip_h->ip_src = findIfaceByName(inIface)->ip;
-  ip_h->ip_dst = ((ip_hdr *)(packet.data() + sizeof(ethernet_hdr)))->ip_src;
-  ip_h->ip_sum = 0;
-  ip_h->ip_sum = cksum(ip_h, sizeof(ip_hdr));
-  
-  // TODO: 以下代码封装为sendIpDatagram
-  // Ethernet header
-  eth_h->ether_type = htons(ethertype_ip);
-  // 查询路由表，找到出接口
+  // 查找路由表，找到出接口
   RoutingTableEntry routing_entry;
   try {
     routing_entry = getRoutingTable().lookup(ip_h->ip_dst);
   } catch(...) {
-    fprintf(stderr, "sendIcmpType3: routing entry not found\n");
+    fprintf(stderr, "sendIpDatagram: routing entry not found\n");
     return;
   }
   auto outIface = findIfaceByName(routing_entry.ifName);
   if(outIface == nullptr) {
-    fprintf(stderr, "sendIcmpType3: failed to find iface by name\n");
+    fprintf(stderr, "sendIpDatagram: failed to find iface by name\n");
     return;
   }
-  
+
+  eth_h->ether_type = htons(ethertype_ip);
   memcpy(eth_h->ether_shost, outIface->addr.data(), ETHER_ADDR_LEN);
 
   // 查询ARP缓存，找到下一跳的MAC地址
@@ -315,9 +253,67 @@ void SimpleRouter::sendIcmpType3(const Buffer& packet, const std::string& inIfac
     m_arp.queueRequest(ip_h->ip_dst, frame, outIface->name);
     return;
   }
-
+  
   memcpy(eth_h->ether_dhost, arp_entry->mac.data(), ETHER_ADDR_LEN);
+  
   sendPacket(frame, outIface->name);
+}
+
+void SimpleRouter::sendIcmpType3(const Buffer& inDatagram, const std::string& inIface, uint8_t type, uint8_t code) {
+  Buffer out_datagram = Buffer(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
+  ip_hdr *ip_h = (ip_hdr *)out_datagram.data();
+  icmp_t3_hdr *icmp_h = (icmp_t3_hdr *)(out_datagram.data() + sizeof(ip_hdr));
+
+  // ICMP header
+  icmp_h->icmp_type = type;
+  icmp_h->icmp_code = code;
+  icmp_h->unused = 0;
+  icmp_h->next_mtu = 0;
+  memcpy(icmp_h->data, inDatagram.data(), ICMP_DATA_SIZE);
+  icmp_h->icmp_sum = 0;
+  icmp_h->icmp_sum = cksum(icmp_h, sizeof(icmp_t3_hdr));
+  
+  // IP header
+  ip_h->ip_tos = 0;
+  ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
+  ip_h->ip_id = htons((uint16_t)rand());
+  ip_h->ip_off = htons(IP_DF);
+  ip_h->ip_ttl = 64;
+  ip_h->ip_p = ip_protocol_icmp;
+  ip_h->ip_src = findIfaceByName(inIface)->ip;
+  ip_h->ip_dst = ((ip_hdr *)(inDatagram.data()))->ip_src;
+  ip_h->ip_sum = 0;
+  ip_h->ip_sum = cksum(ip_h, sizeof(ip_hdr));
+  
+  sendIpDatagram(out_datagram);
+}
+
+void SimpleRouter::sendIcmpEchoReply(const Buffer& inDatagram, const std::string& inIface) {
+  Buffer outDatagram = Buffer(sizeof(ip_hdr) + sizeof(icmp_echo_hdr));
+  ip_hdr *ip_h = (ip_hdr *)outDatagram.data();
+  icmp_echo_hdr *icmp_h = (icmp_echo_hdr *)(outDatagram.data() + sizeof(ip_hdr));
+
+  // ICMP header
+  icmp_h->icmp_type = 0;
+  icmp_h->icmp_code = 0;
+  icmp_h->icmp_id = ((icmp_echo_hdr *)(inDatagram.data() + sizeof(ip_hdr)))->icmp_id;
+  icmp_h->icmp_seq = ((icmp_echo_hdr *)(inDatagram.data() + sizeof(ip_hdr)))->icmp_seq;
+  icmp_h->icmp_sum = 0;
+  icmp_h->icmp_sum = cksum(icmp_h, sizeof(icmp_echo_hdr));
+
+  // IP header
+  ip_h->ip_tos = 0;
+  ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_echo_hdr));
+  ip_h->ip_id = htons((uint16_t)rand());
+  ip_h->ip_off = htons(IP_DF);
+  ip_h->ip_ttl = 64;
+  ip_h->ip_p = ip_protocol_icmp;
+  ip_h->ip_src = findIfaceByName(inIface)->ip;
+  ip_h->ip_dst = ((ip_hdr *)(inDatagram.data()))->ip_src;
+  ip_h->ip_sum = 0;
+  ip_h->ip_sum = cksum(ip_h, sizeof(ip_hdr));
+
+  sendIpDatagram(outDatagram);
 }
 
 //////////////////////////////////////////////////////////////////////////
