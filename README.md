@@ -30,7 +30,7 @@ $ sudo ./autograde.py
 - [x] sendIpDatagram
 - [x] sendIcmpType3
 - [x] sendIcmpEchoReply
-- [ ] lookup
+- [x] lookup
 
 
 ## Problems
@@ -41,6 +41,6 @@ $ sudo ./autograde.py
 2. `queueRequest`函数会自动发送ARP请求吗？
 
 ## Reference
-[cs118-router-THSS/](https://github.com/finall1008/cs118-router-THSS/)
+[cs118-router-THSS](https://github.com/finall1008/cs118-router-THSS/)
 
 [cs118-router-project](https://github.com/zbw970527/cs118-router-project)
