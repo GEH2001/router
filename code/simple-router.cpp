@@ -224,7 +224,7 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
   return;
 }
 
-void SimpleRouter::sendIpDatagram(const Buffer& datagram) {
+void SimpleRouter::sendIpDatagram(const Buffer& datagram, const std::string& inIface) {
   Buffer frame = Buffer(datagram);
   frame.insert(frame.begin(), sizeof(ethernet_hdr), 0);
   ethernet_hdr *eth_h = (ethernet_hdr *)frame.data();
@@ -250,7 +250,7 @@ void SimpleRouter::sendIpDatagram(const Buffer& datagram) {
   auto arp_entry = m_arp.lookup(ip_h->ip_dst);
   if(arp_entry == nullptr) {
     // 添加到ARP请求队列
-    m_arp.queueRequest(ip_h->ip_dst, frame, outIface->name);
+    m_arp.queueRequest(ip_h->ip_dst, frame, outIface->name, inIface);
     return;
   }
   
@@ -285,7 +285,7 @@ void SimpleRouter::sendIcmpType3(const Buffer& inDatagram, const std::string& in
   ip_h->ip_sum = 0;
   ip_h->ip_sum = cksum(ip_h, sizeof(ip_hdr));
   
-  sendIpDatagram(out_datagram);
+  sendIpDatagram(out_datagram, inIface);
 }
 
 void SimpleRouter::sendIcmpEchoReply(const Buffer& inDatagram, const std::string& inIface) {
@@ -313,7 +313,7 @@ void SimpleRouter::sendIcmpEchoReply(const Buffer& inDatagram, const std::string
   ip_h->ip_sum = 0;
   ip_h->ip_sum = cksum(ip_h, sizeof(ip_hdr));
 
-  sendIpDatagram(outDatagram);
+  sendIpDatagram(outDatagram, inIface);
 }
 
 //////////////////////////////////////////////////////////////////////////

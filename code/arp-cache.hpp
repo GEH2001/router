@@ -86,6 +86,7 @@ struct PendingPacket
 {
   Buffer packet;     //< A raw Ethernet frame, presumably with the dest MAC empty
   std::string iface; //< The outgoing interface
+  std::string inIface; //< !new, The incoming interface
 };
 
 struct ArpRequest {
@@ -161,10 +162,11 @@ public:
    * @param ip 目的IP地址，用于构建ARP请求包
    * @param packet 要发送的数据包
    * @param iface 出接口
+   * @param inIface 入接口 new added
    * @note 当ARP响应到达时，会将其关联的`packet`通过`iface`发送出去
    */
   std::shared_ptr<ArpRequest>
-  queueRequest(uint32_t ip, const Buffer& packet, const std::string& iface);
+  queueRequest(uint32_t ip, const Buffer& packet, const std::string& iface, const std::string& inIface);
 
   /*
    * Frees all memory associated with this arp request entry. If this arp request

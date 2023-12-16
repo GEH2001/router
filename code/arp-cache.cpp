@@ -30,8 +30,78 @@ namespace simple_router {
 void
 ArpCache::periodicCheckArpRequestsAndCacheEntries()
 {
+  fprintf(stderr, "periodic: check arp requests and cache entries\n");
+  
+  /* !!! Do not send icmp here, otherwise it will cause deadlock for m_mutex */
+  
+  /* handle arp request */
+  for(auto it = m_arpRequests.begin(); it != m_arpRequests.end();) {
+    auto req = *it;
+    if(req->nTimesSent >= MAX_SENT_TIME) {
+      fprintf(stderr, "periodic: times sent >= 5\n");
+      
+      // send icmp host unreachable
+      for(auto pendpkt : req->packets) {
+        Buffer inDatagram(pendpkt.packet.size() - sizeof(ethernet_hdr));
+        memcpy(inDatagram.data(), pendpkt.packet.data() + sizeof(ethernet_hdr), inDatagram.size());
+        
+        if(pendpkt.inIface == "") {
+          fprintf(stderr, "periodic: inIface is empty\n");
+          continue;
+        }
 
-  // FILL THIS IN
+        // TODO: dead lock, 3 0, 3 1
+        // return pair<inDatagram, inIface>
+        m_router.sendIcmpType3(inDatagram, pendpkt.inIface, 3, 0);
+        
+      }
+
+
+      // remove the request from the list, and return the next iterator
+      it = m_arpRequests.erase(it);
+      continue;
+    } else {
+      // send arp request
+      fprintf(stderr, "periodic: send arp request\n");
+
+      Buffer outframe(sizeof(ethernet_hdr) + sizeof(arp_hdr));
+      ethernet_hdr* eth_h = (ethernet_hdr*)outframe.data();
+      arp_hdr* arp_h = (arp_hdr*)(outframe.data() + sizeof(ethernet_hdr));
+
+      auto iface = m_router.findIfaceByName(req->packets.front().iface);
+      // set ethernet header
+      memcpy(eth_h->ether_dhost, ETHER_ADDR_BROADCAST.data(), ETHER_ADDR_LEN);
+      memcpy(eth_h->ether_shost, iface->addr.data(), ETHER_ADDR_LEN);
+      eth_h->ether_type = htons(ethertype_arp);
+      // set arp header
+      arp_h->arp_hrd = htons(arp_hrd_ethernet);
+      arp_h->arp_pro = htons(ethertype_ip);
+      arp_h->arp_hln = ETHER_ADDR_LEN;
+      arp_h->arp_pln = 4;
+      arp_h->arp_op = htons(arp_op_request);
+      memcpy(arp_h->arp_sha, iface->addr.data(), ETHER_ADDR_LEN);
+      arp_h->arp_sip = iface->ip;
+      memcpy(arp_h->arp_tha, ETHER_ADDR_BROADCAST.data(), ETHER_ADDR_LEN);
+      arp_h->arp_tip = req->ip;
+      // send the packet
+      m_router.sendPacket(outframe, iface->name);
+      // update the request
+      req->timeSent = steady_clock::now();
+      req->nTimesSent++;
+
+      it++;
+    }
+  }
+
+  /* remove invalid entries */
+  for(auto it = m_cacheEntries.begin(); it != m_cacheEntries.end(); ) {
+    auto entry = *it;
+    if(!entry->isValid) {
+      it = m_cacheEntries.erase(it);
+    } else {
+      it++;
+    }
+  }
 
 }
 //////////////////////////////////////////////////////////////////////////
@@ -67,7 +137,7 @@ ArpCache::lookup(uint32_t ip)
 }
 
 std::shared_ptr<ArpRequest>
-ArpCache::queueRequest(uint32_t ip, const Buffer& packet, const std::string& iface)
+ArpCache::queueRequest(uint32_t ip, const Buffer& packet, const std::string& iface, const std::string& inIface)
 {
   std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -81,7 +151,7 @@ ArpCache::queueRequest(uint32_t ip, const Buffer& packet, const std::string& ifa
   }
 
   // Add the packet to the list of packets for this request
-  (*request)->packets.push_back({packet, iface});
+  (*request)->packets.push_back({packet, iface, inIface});
   return *request;
 }
 

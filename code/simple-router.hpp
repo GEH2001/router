@@ -67,13 +67,18 @@ public:
 
   /**
    * 将IP数据报封装为以太网帧, 调用sendPacket方法发送
+   * 查询路由表，找到出接口 \p outIface
+   * 查询ARP缓存，找到目的IP对应的MAC地址 \p outMac
+   * 以太网帧的源MAC地址为 \p outIface 的MAC地址, 目的MAC地址为 \p outMac
    * @param datagram 要发送的IP数据报
+   * @param inIface 入接口
    */
-  void sendIpDatagram(const Buffer& datagram);
+  void sendIpDatagram(const Buffer& datagram, const std::string& inIface);
 
   /**
    * 发送 Time Exceeded(11,0) 和 Port Unreachable(3,3) 的ICMP报文
    * 构建ICMP报文, 调用sendIpDatagram方法发送
+   * ICMP报文的源IP为 \p inIface 的IP地址, 目的IP为IP数据报的源IP地址
    * @param inDatagram 帧携带的IP数据报
    * @param inIface 帧的入接口
    * @param type ICMP类型
