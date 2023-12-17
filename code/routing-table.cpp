@@ -44,6 +44,7 @@ RoutingTable::lookup(uint32_t ip) const
     }
   }
   if (found) {
+    fprintf(stderr, "Found routing entry: %s\n", ipToString(result.dest).c_str());
     return result;
   }
 

@@ -34,6 +34,7 @@
 
 namespace simple_router {
 
+/* 调用之前应该先把头部的checksum字段置为0 */
 uint16_t cksum(const void* data, int len);
 uint16_t ethertype(const uint8_t* buf);
 uint8_t ip_protocol(const uint8_t* buf);

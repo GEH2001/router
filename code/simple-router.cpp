@@ -27,6 +27,7 @@ namespace simple_router {
 void
 SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
 {
+  fprintf(stderr, "\n-----------------handlePacket-------------------\n");
   std::cerr << "Got packet of size " << packet.size() << " on interface " << inIface << std::endl;
 
   const Interface* iface = findIfaceByName(inIface);
@@ -40,6 +41,7 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
   // FILL THIS IN
 
   print_hdrs(packet);
+  fprintf(stderr, "-----------------------------------\n\n");
 
   // Parse ethernet header
   ethernet_hdr *eth_hdr = (ethernet_hdr *)packet.data();
@@ -58,7 +60,7 @@ SimpleRouter::handlePacket(const Buffer& packet, const std::string& inIface)
   /**
    * ignore Ethernet frames other than ARP and IPv4
    */
-  auto eth_type = eth_hdr->ether_type;
+  auto eth_type = ntohs(eth_hdr->ether_type);
   if(eth_type == ethertype_arp) {
     handleArp((arp_hdr *)(packet.data() + sizeof(ethernet_hdr)));
   } else if (eth_type == ethertype_ip) {
@@ -157,7 +159,9 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
     return;
   }
   // 检查IP包的校验和
-  if(ip_h->ip_sum != cksum(ip_h, sizeof(ip_hdr))) {
+  uint16_t old_sum = ip_h->ip_sum;
+  ip_h->ip_sum = 0; // NOTE: 校验和字段置0
+  if(old_sum != cksum(ip_h, sizeof(ip_hdr))) {
     std::cerr << "Received IP packet, but checksum is incorrect, ignoring" << std::endl;
     return;
   }
@@ -165,13 +169,13 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
   
   // 路由器直接丢弃TTL为0或1的IP数据报，发送ICMP超时差错报文
   // 参考https://blog.csdn.net/weixin_33881753/article/details/92789295
-  if(ip_h->ip_ttl <= 1) {
-    // TODO: 发送ICMP超时差错报文
-    std::cerr << "Received IP packet, TTL is 0 or 1, respond ICMP(11,0)" << std::endl;
-    // 去除以太网帧头
-    sendIcmpType3(datagram, inIface, 11, 0); // Time Exceeded
-    return;
-  }
+  // if(ip_h->ip_ttl <= 1) {
+  //   // TODO: 发送ICMP超时差错报文
+  //   std::cerr << "Received IP packet, TTL is 0 or 1, respond ICMP(11,0)" << std::endl;
+  //   // 去除以太网帧头
+  //   sendIcmpType3(datagram, inIface, 11, 0); // Time Exceeded
+  //   return;
+  // }
 
   // 检查IP包的目的IP地址是否为路由器的IP地址
   auto dst_iface = findIfaceByIp(ip_h->ip_dst);
@@ -195,7 +199,7 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
       return;
     }
     // (b) 收到Echo请求，返回Echo应答
-    if(icmp_h->icmp_code == 8 && icmp_h->icmp_type == 0) {
+    if(icmp_h->icmp_type == 8 && icmp_h->icmp_code == 0) {
       std::cerr << "Received IP packet, ICMP Echo request, respond ICMP(0,0)" << std::endl;
       sendIcmpEchoReply(datagram, inIface); // Echo Reply
     } else {
@@ -219,8 +223,14 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
   out_ip_h->ip_sum = 0;
   out_ip_h->ip_sum = cksum(out_ip_h, sizeof(ip_hdr)); // 重新计算校验和
 
-  sendIpDatagram(out_datagram);
-  
+  // sendIpDatagram(out_datagram, inIface);
+  if(ip_h->ip_ttl != 0) {
+    sendIpDatagram(out_datagram, inIface);  // TTL不为0，转发IP数据报
+  } else {
+    fprintf(stderr, "Aboout to forward packet, TTL is 0, respond ICMP(11,0)");
+    sendIcmpType3(datagram, inIface, 11, 0); // Time Exceeded
+  }
+
   return;
 }
 
@@ -274,6 +284,8 @@ void SimpleRouter::sendIcmpType3(const Buffer& inDatagram, const std::string& in
   icmp_h->icmp_sum = cksum(icmp_h, sizeof(icmp_t3_hdr));
   
   // IP header
+  ip_h->ip_v = 4;
+  ip_h->ip_hl = 5;
   ip_h->ip_tos = 0;
   ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
   ip_h->ip_id = htons((uint16_t)rand());
@@ -289,21 +301,27 @@ void SimpleRouter::sendIcmpType3(const Buffer& inDatagram, const std::string& in
 }
 
 void SimpleRouter::sendIcmpEchoReply(const Buffer& inDatagram, const std::string& inIface) {
-  Buffer outDatagram = Buffer(sizeof(ip_hdr) + sizeof(icmp_echo_hdr));
+  // Buffer outDatagram = Buffer(sizeof(ip_hdr) + sizeof(icmp_echo_hdr));
+  Buffer outDatagram = Buffer(inDatagram);
   ip_hdr *ip_h = (ip_hdr *)outDatagram.data();
   icmp_echo_hdr *icmp_h = (icmp_echo_hdr *)(outDatagram.data() + sizeof(ip_hdr));
 
   // ICMP header
-  icmp_h->icmp_type = 0;
+  icmp_h->icmp_type = 0;  // only type change from 8 to 0
   icmp_h->icmp_code = 0;
   icmp_h->icmp_id = ((icmp_echo_hdr *)(inDatagram.data() + sizeof(ip_hdr)))->icmp_id;
   icmp_h->icmp_seq = ((icmp_echo_hdr *)(inDatagram.data() + sizeof(ip_hdr)))->icmp_seq;
   icmp_h->icmp_sum = 0;
-  icmp_h->icmp_sum = cksum(icmp_h, sizeof(icmp_echo_hdr));
+  // icmp_h->icmp_sum = cksum(icmp_h, sizeof(icmp_echo_hdr)); 
+  // 校验和需要计算整个ICMP报文，包括ICMP头和ICMP数据
+  icmp_h->icmp_sum = cksum(outDatagram.data() + sizeof(ip_hdr), outDatagram.size() - sizeof(ip_hdr));
 
   // IP header
+  ip_h->ip_v = 4;
+  ip_h->ip_hl = 5;
   ip_h->ip_tos = 0;
-  ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_echo_hdr));
+  // ip_h->ip_len = htons(sizeof(ip_hdr) + sizeof(icmp_echo_hdr));
+  ip_h->ip_len = htons(outDatagram.size());
   ip_h->ip_id = htons((uint16_t)rand());
   ip_h->ip_off = htons(IP_DF);
   ip_h->ip_ttl = 64;
@@ -328,6 +346,9 @@ SimpleRouter::SimpleRouter()
 void
 SimpleRouter::sendPacket(const Buffer& packet, const std::string& outIface)
 {
+  fprintf(stderr, "\n-----------------sendPacket(%s)-------------------\n", outIface.c_str());
+  print_hdrs(packet);
+  fprintf(stderr, "-----------------------------------\n\n");
   m_pox->begin_sendPacket(packet, outIface);
 }
 

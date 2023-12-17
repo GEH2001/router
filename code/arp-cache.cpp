@@ -30,7 +30,7 @@ namespace simple_router {
 void
 ArpCache::periodicCheckArpRequestsAndCacheEntries()
 {
-  fprintf(stderr, "periodic: check arp requests and cache entries\n");
+  // fprintf(stderr, "periodic: check arp requests and cache entries\n");
   
   /* !!! Do not send icmp here, otherwise it will cause deadlock for m_mutex */
   
@@ -81,7 +81,8 @@ ArpCache::periodicCheckArpRequestsAndCacheEntries()
       arp_h->arp_op = htons(arp_op_request);
       memcpy(arp_h->arp_sha, iface->addr.data(), ETHER_ADDR_LEN);
       arp_h->arp_sip = iface->ip;
-      memcpy(arp_h->arp_tha, ETHER_ADDR_BROADCAST.data(), ETHER_ADDR_LEN);
+      // memcpy(arp_h->arp_tha, ETHER_ADDR_BROADCAST.data(), ETHER_ADDR_LEN);
+      memset(arp_h->arp_tha, 0, ETHER_ADDR_LEN);
       arp_h->arp_tip = req->ip;
       // send the packet
       m_router.sendPacket(outframe, iface->name);
@@ -97,6 +98,7 @@ ArpCache::periodicCheckArpRequestsAndCacheEntries()
   for(auto it = m_cacheEntries.begin(); it != m_cacheEntries.end(); ) {
     auto entry = *it;
     if(!entry->isValid) {
+      fprintf(stderr, "ArpCache entry for %s is no more valid\n", ipToString(entry->ip).c_str());
       it = m_cacheEntries.erase(it);
     } else {
       it++;
