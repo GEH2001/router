@@ -140,8 +140,12 @@ public:
    *         if not entry->isValid
    *             record entry for removal
    *     remove all entries marked for removal
+   *  
+   *     NOTE: return type changed
    */
-  void
+  // void
+  // periodicCheckArpRequestsAndCacheEntries();
+  std::vector<std::tuple<Buffer, std::string>>
   periodicCheckArpRequestsAndCacheEntries();
 
   /**

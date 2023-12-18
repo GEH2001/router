@@ -27,13 +27,20 @@ namespace simple_router {
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 // IMPLEMENT THIS METHOD
-void
+std::vector<std::tuple<Buffer, std::string>>
 ArpCache::periodicCheckArpRequestsAndCacheEntries()
 {
-  // fprintf(stderr, "periodic: check arp requests and cache entries\n");
-  
   /* !!! Do not send icmp here, otherwise it will cause deadlock for m_mutex */
+  // this function is called by ticker, which requires m_mutex
+  // sendIcmpType3 also requires m_mutex
   
+  // function call path: 
+  //            sendIcmpType3 
+  //            <- sendIpDatagram 
+  //            <- ArpCache.Lookup & ArpCache.queueRequest (the two func request m_mutex)
+
+  std::vector<std::tuple<Buffer, std::string>> ret;
+
   /* handle arp request */
   for(auto it = m_arpRequests.begin(); it != m_arpRequests.end();) {
     auto req = *it;
@@ -50,9 +57,8 @@ ArpCache::periodicCheckArpRequestsAndCacheEntries()
           continue;
         }
 
-        // TODO: dead lock, 3 0, 3 1
-        // return pair<inDatagram, inIface>
-        m_router.sendIcmpType3(inDatagram, pendpkt.inIface, 3, 0);
+        // about to send icmp host unreachable (but not here)
+        ret.push_back(std::make_tuple(inDatagram, pendpkt.inIface));
         
       }
 
@@ -104,6 +110,8 @@ ArpCache::periodicCheckArpRequestsAndCacheEntries()
       it++;
     }
   }
+
+  return ret;
 
 }
 //////////////////////////////////////////////////////////////////////////
@@ -203,6 +211,8 @@ ArpCache::ticker()
   while (!m_shouldStop) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
+    std::vector<std::tuple<Buffer, std::string>> packetsToSend;
+
     {
       std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -214,8 +224,14 @@ ArpCache::ticker()
         }
       }
 
-      periodicCheckArpRequestsAndCacheEntries();
+      packetsToSend = periodicCheckArpRequestsAndCacheEntries();
     }
+
+    // m_mutex is unlocked here, so we can send packets
+    for (auto& packet : packetsToSend) {
+      m_router.sendIcmpType3(std::get<0>(packet), std::get<1>(packet), 3, 1);
+    }
+
   }
 }
 

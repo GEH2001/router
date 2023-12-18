@@ -166,16 +166,7 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
     return;
   }
 
-  
-  // 路由器直接丢弃TTL为0或1的IP数据报，发送ICMP超时差错报文
-  // 参考https://blog.csdn.net/weixin_33881753/article/details/92789295
-  // if(ip_h->ip_ttl <= 1) {
-  //   // TODO: 发送ICMP超时差错报文
-  //   std::cerr << "Received IP packet, TTL is 0 or 1, respond ICMP(11,0)" << std::endl;
-  //   // 去除以太网帧头
-  //   sendIcmpType3(datagram, inIface, 11, 0); // Time Exceeded
-  //   return;
-  // }
+
 
   // 检查IP包的目的IP地址是否为路由器的IP地址
   auto dst_iface = findIfaceByIp(ip_h->ip_dst);
@@ -224,10 +215,12 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
   out_ip_h->ip_sum = cksum(out_ip_h, sizeof(ip_hdr)); // 重新计算校验和
 
   // sendIpDatagram(out_datagram, inIface);
-  if(ip_h->ip_ttl != 0) {
+  if(out_ip_h->ip_ttl != 0) {
+    fprintf(stderr, "About to forward IP datagram\n");
     sendIpDatagram(out_datagram, inIface);  // TTL不为0，转发IP数据报
   } else {
-    fprintf(stderr, "Aboout to forward packet, TTL is 0, respond ICMP(11,0)");
+    // TTL为0，发送ICMP超时差错报文
+    fprintf(stderr, "Failed to forward packet, TTL is 0, respond ICMP(11,0)");
     sendIcmpType3(datagram, inIface, 11, 0); // Time Exceeded
   }
 
@@ -235,6 +228,7 @@ void SimpleRouter::handleIp(const Buffer& datagram, const std::string& inIface) 
 }
 
 void SimpleRouter::sendIpDatagram(const Buffer& datagram, const std::string& inIface) {
+  fprintf(stderr, "sendIpDatagram\n");
   Buffer frame = Buffer(datagram);
   frame.insert(frame.begin(), sizeof(ethernet_hdr), 0);
   ethernet_hdr *eth_h = (ethernet_hdr *)frame.data();
@@ -257,7 +251,9 @@ void SimpleRouter::sendIpDatagram(const Buffer& datagram, const std::string& inI
   memcpy(eth_h->ether_shost, outIface->addr.data(), ETHER_ADDR_LEN);
 
   // 查询ARP缓存，找到下一跳的MAC地址
+  fprintf(stderr, "sendIpDatagram: lookup arp cache\n");
   auto arp_entry = m_arp.lookup(ip_h->ip_dst);
+  fprintf(stderr, "sendIpDatagram: arp entry found\n");
   if(arp_entry == nullptr) {
     // 添加到ARP请求队列
     m_arp.queueRequest(ip_h->ip_dst, frame, outIface->name, inIface);
@@ -270,6 +266,7 @@ void SimpleRouter::sendIpDatagram(const Buffer& datagram, const std::string& inI
 }
 
 void SimpleRouter::sendIcmpType3(const Buffer& inDatagram, const std::string& inIface, uint8_t type, uint8_t code) {
+  fprintf(stderr, "sendIcmp(%d, %d)\n", type, code);
   Buffer out_datagram = Buffer(sizeof(ip_hdr) + sizeof(icmp_t3_hdr));
   ip_hdr *ip_h = (ip_hdr *)out_datagram.data();
   icmp_t3_hdr *icmp_h = (icmp_t3_hdr *)(out_datagram.data() + sizeof(ip_hdr));

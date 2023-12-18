@@ -32,7 +32,6 @@ $ sudo ./autograde.py
 - [x] sendIcmpEchoReply
 - [x] lookup
 - [x] handle ARP cache events
-- [ ] traceroute
 
 
 ## Problems
