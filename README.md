@@ -7,7 +7,7 @@
 
 
 
-> autograge
+> autograde
 
 先启动 pox router，然后执行脚本
 
@@ -16,6 +16,16 @@ $ chmod +x autograde.py
 $ sudo ./autograde.py
 ```
 
+如果`sudo ./autograde.py`提示错误信息如下
+
+```
+/usr/bin/env: 'python\r': No such file or directory
+```
+这是因为run.py文件可能在windows上打开过，导致其换行符变为了CRLF
+
+但是在linux系统文件的换行符为LF
+
+解决办法是转变换行符格式，linux命令行输入`dos2unix autograde.py`
 
 
 **启动pox**
@@ -38,11 +48,11 @@ $ sudo ./run.py
 ```
 /usr/bin/env: 'python\r': No such file or directory
 ```
-这是因为autograde.py文件可能在windows上打开过，导致其换行符变为了CRLF
+这是因为run.py文件可能在windows上打开过，导致其换行符变为了CRLF
 
 但是在linux系统文件的换行符为LF
 
-解决办法是转变换行符格式，linux命令行输入`dos2unix autograde.py`
+解决办法是转变换行符格式，linux命令行输入`dos2unix run.py`
 
 
 
